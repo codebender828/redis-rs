@@ -1,5 +1,8 @@
+use parser::{parse_command, serialize_response, Command};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+
+pub mod parser;
 
 #[tokio::main]
 async fn main() {
@@ -29,9 +32,42 @@ fn handle_connection(mut stream: TcpStream) {
                 Ok(0) => break,
                 Ok(n) => {
                     println!("Received {} bytes", n);
-                    if let Err(e) = stream.write_all(b"+PONG\r\n").await {
-                        println!("Failed to write to stream; err = {:?}", e);
-                        break;
+                    match parse_command(&buf[..n]) {
+                        Ok(Command::Ping(message)) => {
+                            let response = match message {
+                                Some(msg) => serialize_response(&msg),
+                                None => serialize_response("PONG"),
+                            };
+                            if let Err(e) = stream.write_all(response.as_bytes()).await {
+                                println!("Failed to write to stream; err = {:?}", e);
+                                break;
+                            }
+                        }
+                        Ok(Command::Echo(message)) => {
+                            let response = serialize_response(&message);
+                            if let Err(e) = stream.write_all(response.as_bytes()).await {
+                                println!("Failed to write to stream; err = {:?}", e);
+                                break;
+                            }
+                        }
+                        Ok(Command::Unknown(cmd)) => {
+                            eprintln!("Unknown command: {}", cmd);
+                            let response =
+                                serialize_response(&format!("ERR Unknown command: {}", cmd));
+                            if let Err(e) = stream.write_all(response.as_bytes()).await {
+                                println!("Failed to write to stream; err = {:?}", e);
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to parse command: {}", e);
+                            let response =
+                                serialize_response(&format!("ERR Failed to parse command: {}", e));
+                            if let Err(e) = stream.write_all(response.as_bytes()).await {
+                                println!("Failed to write to stream; err = {:?}", e);
+                                break;
+                            }
+                        }
                     }
                 }
                 Err(e) => {
