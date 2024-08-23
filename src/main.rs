@@ -9,7 +9,6 @@ async fn main() {
 
     loop {
         let stream = listener.accept().await;
-
         match stream {
             Ok((stream, _)) => handle_connection(stream),
             Err(e) => {
@@ -21,15 +20,25 @@ async fn main() {
 
 /** Handles TCP connections to Redis Server */
 fn handle_connection(mut stream: TcpStream) {
-    println!("accepted new connection");
+    println!("Accepted new connection");
     tokio::spawn(async move {
         loop {
             let mut buf = [0; 512];
-            let read_count = stream.read(&mut buf).await.unwrap();
-            if read_count == 0 {
-                break;
+
+            match stream.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    println!("Received {} bytes", n);
+                    if let Err(e) = stream.write_all(b"+PONG\r\n").await {
+                        println!("Failed to write to stream; err = {:?}", e);
+                        break;
+                    }
+                }
+                Err(e) => {
+                    println!("Failed to read from stream; err = {:?}", e);
+                    break;
+                }
             }
-            stream.write(b"+PONG\r\n").await.unwrap();
         }
     });
 }
