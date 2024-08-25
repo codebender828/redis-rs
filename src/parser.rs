@@ -8,8 +8,10 @@ pub enum Command {
 }
 
 /** Parses Redis command */
-pub fn parse_command(input: &[u8]) -> Result<Command, String> {
-    let input = str::from_utf8(input).map_err(|e| format!("Invalid UTF-8 sequence: {}", e))?;
+pub fn parse_command(command_input: &[u8]) -> Result<Command, String> {
+    let input =
+        str::from_utf8(command_input).map_err(|e| format!("Invalid UTF-8 sequence: {}", e))?;
+
     let parts: Vec<&str> = input.split("\r\n").collect();
 
     if parts.len() < 4 || !parts[0].starts_with("*") {
