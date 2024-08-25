@@ -1,15 +1,17 @@
-use dashmap::DashMap;
 use parser::{parse_command, serialize_response, Command};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 pub mod parser;
+// import the storage module
+pub mod storage;
+use storage::Storage;
 
 #[tokio::main]
 async fn main() {
     println!("Starting Redis Server!");
 
-    let storage: &'static DashMap<String, String> = Box::leak(Box::new(DashMap::new()));
+    let storage: &'static Storage = Box::leak(Box::new(Storage::new()));
 
     let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
 
@@ -25,7 +27,7 @@ async fn main() {
 }
 
 /** Handles TCP connections to Redis Server */
-fn handle_connection(mut stream: TcpStream, storage: &'static DashMap<String, String>) {
+fn handle_connection(mut stream: TcpStream, storage: &'static Storage) {
     println!("Accepted new connection");
     tokio::spawn(async move {
         loop {
@@ -62,9 +64,10 @@ fn handle_connection(mut stream: TcpStream, storage: &'static DashMap<String, St
                                 break;
                             }
                         }
-                        Ok(Command::Set(key, value)) => {
-                            eprintln!("SET command: key = {}, value = {}", key, value);
-                            storage.insert(key, value);
+                        Ok(Command::Set(key, value, optional_ags)) => {
+                            // Handle all optional parameters
+                            storage.set(key, value, optional_ags.unwrap_or_default());
+
                             let response = serialize_response("OK");
                             if let Err(e) = stream.write_all(response.as_bytes()).await {
                                 println!("Failed to write to stream; err = {:?}", e);
@@ -73,10 +76,11 @@ fn handle_connection(mut stream: TcpStream, storage: &'static DashMap<String, St
                         }
                         Ok(Command::Get(key)) => {
                             eprintln!("GET command: key = {}", key);
-                            let response = match storage.get(&key) {
+                            let response = match &storage.get(&key) {
                                 Some(value) => serialize_response(&value),
                                 None => format!("$-1\r\n"),
                             };
+                            println!("Response: {:?}", response);
                             if let Err(e) = stream.write_all(response.as_bytes()).await {
                                 println!("Failed to write to stream; err = {:?}", e);
                                 break;

@@ -4,7 +4,7 @@ use std::str;
 pub enum Command {
     Ping(Option<String>),
     Echo(String),
-    Set(String, String),
+    Set(String, String, Option<Vec<(String, String)>>),
     Get(String),
     Unknown(String),
 }
@@ -46,7 +46,37 @@ pub fn parse_command(command_input: &[u8]) -> Result<Command, String> {
                     return Err("Invalid SET command format: value not provided".to_string());
                 }
             } else {
-                Ok(Command::Set(parts[4].to_string(), parts[6].to_string()))
+                // Check if the optional arguments are provided
+                if parts.len() == 8 {
+                    Ok(Command::Set(
+                        parts[4].to_string(),
+                        parts[6].to_string(),
+                        None,
+                    ))
+                } else if parts.len() > 8 {
+                    let mut optional_args: Vec<String> = Vec::with_capacity(parts.len() - 8);
+                    for i in 8..parts.len() {
+                        optional_args.push(parts[i].to_string());
+                    }
+
+                    let options: Vec<String> = optional_args
+                        .iter()
+                        .filter(|s| !s.starts_with("$"))
+                        .map(|f| f.clone())
+                        .collect();
+
+                    let processed_optional_arguments = group_redis_optional_arguments(options);
+
+                    Ok(Command::Set(
+                        parts[4].to_string(),
+                        parts[6].to_string(),
+                        Some(processed_optional_arguments),
+                    ))
+                } else {
+                    return Err(
+                        "Invalid SET command format: Unknown optional parameters".to_string()
+                    );
+                }
             }
         }
         "GET" => {
@@ -67,4 +97,21 @@ pub fn parse_command(command_input: &[u8]) -> Result<Command, String> {
 /** Serializes response to match RESP format */
 pub fn serialize_response(response: &str) -> String {
     format!("+{}\r\n", response)
+}
+
+/** Groups all optional arguments */
+pub fn group_redis_optional_arguments(options: Vec<String>) -> Vec<(String, String)> {
+    options
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<String>>()
+        .chunks(2)
+        .filter_map(|chunk| {
+            if chunk.len() == 2 {
+                Some((chunk[0].to_uppercase(), chunk[1].to_string()))
+            } else {
+                None
+            }
+        })
+        .collect()
 }
