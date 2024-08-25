@@ -5,6 +5,7 @@ pub enum Command {
     Ping(Option<String>),
     Echo(String),
     Set(String, String),
+    Get(String),
     Unknown(String),
 }
 
@@ -46,6 +47,17 @@ pub fn parse_command(command_input: &[u8]) -> Result<Command, String> {
                 }
             } else {
                 Ok(Command::Set(parts[4].to_string(), parts[6].to_string()))
+            }
+        }
+        "GET" => {
+            if parts.len() < 6 {
+                if parts.len() < 5 {
+                    return Err("Invalid GET command format".to_string());
+                } else {
+                    return Err("Invalid GET command format: key not provided".to_string());
+                }
+            } else {
+                Ok(Command::Get(parts[4].to_string()))
             }
         }
         _ => Ok(Command::Unknown(command)),

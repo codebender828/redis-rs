@@ -71,6 +71,17 @@ fn handle_connection(mut stream: TcpStream, storage: &'static DashMap<String, St
                                 break;
                             }
                         }
+                        Ok(Command::Get(key)) => {
+                            eprintln!("GET command: key = {}", key);
+                            let response = match storage.get(&key) {
+                                Some(value) => serialize_response(&value),
+                                None => format!("$-1\r\n"),
+                            };
+                            if let Err(e) = stream.write_all(response.as_bytes()).await {
+                                println!("Failed to write to stream; err = {:?}", e);
+                                break;
+                            }
+                        }
                         Err(e) => {
                             eprintln!("Failed to parse command: {}", e);
                             let response =
