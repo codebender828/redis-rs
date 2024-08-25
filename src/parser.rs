@@ -4,6 +4,7 @@ use std::str;
 pub enum Command {
     Ping(Option<String>),
     Echo(String),
+    Set(String, String),
     Unknown(String),
 }
 
@@ -34,6 +35,17 @@ pub fn parse_command(command_input: &[u8]) -> Result<Command, String> {
                 Ok(Command::Ping(Some(parts[4].to_string())))
             } else {
                 Ok(Command::Ping(None))
+            }
+        }
+        "SET" => {
+            if parts.len() < 7 {
+                if parts.len() < 6 {
+                    return Err("Invalid SET command format".to_string());
+                } else {
+                    return Err("Invalid SET command format: value not provided".to_string());
+                }
+            } else {
+                Ok(Command::Set(parts[4].to_string(), parts[6].to_string()))
             }
         }
         _ => Ok(Command::Unknown(command)),
