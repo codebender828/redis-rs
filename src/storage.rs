@@ -80,19 +80,19 @@ impl Storage {
 
     /** Retrieves a value from storage */
     pub fn get(&self, key: &str) -> Option<String> {
-        match self.storage.get(key) {
-            Some(result) => {
-                if let Some(expires_at) = result.expires_at {
-                    if expires_at < Instant::now() {
-                        self.remove(key);
-                        return None;
-                    }
-                    return None;
+        self.storage.get(key).and_then(|result| {
+            let now = Instant::now();
+            if let Some(expires_at) = result.expires_at {
+                if expires_at < now {
+                    drop(result);
+                    self.remove(key);
+                    None
+                } else {
+                    Some(result.value.clone())
                 }
-
+            } else {
                 Some(result.value.clone())
             }
-            None => None,
-        }
+        })
     }
 }

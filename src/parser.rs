@@ -9,6 +9,12 @@ pub enum Command {
     Unknown(String),
 }
 
+pub enum RedisValue {
+    SimpleString(String),
+    BulkString(Option<String>),
+    Error(String),
+}
+
 /** Parses Redis command */
 pub fn parse_command(command_input: &[u8]) -> Result<Command, String> {
     let input =
@@ -95,8 +101,13 @@ pub fn parse_command(command_input: &[u8]) -> Result<Command, String> {
 }
 
 /** Serializes response to match RESP format */
-pub fn serialize_response(response: &str) -> String {
-    format!("+{}\r\n", response)
+pub fn serialize_response(value: RedisValue) -> String {
+    match value {
+        RedisValue::SimpleString(s) => format!("+{}\r\n", s),
+        RedisValue::BulkString(Some(s)) => format!("${}\r\n{}\r\n", s.len(), s),
+        RedisValue::BulkString(None) => "$-1\r\n".to_string(),
+        RedisValue::Error(s) => format!("-{}\r\n", s),
+    }
 }
 
 /** Groups all optional arguments */
