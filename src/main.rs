@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use parser::{parse_command, serialize_response, Command, RedisValue};
+use std::env;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex as AsyncMutex;
@@ -10,20 +11,36 @@ pub mod parser;
 pub mod storage;
 use storage::Storage;
 
+pub mod config;
+use config::Config;
+
+pub mod arguments;
+use arguments::{parse_cli_arguments, process_configuration_arguments};
+
 #[tokio::main]
 async fn main() {
     println!("Starting Redis Server!");
 
+    let mut args: Vec<String> = env::args().collect();
+    // Remove the first argument which is the binary name
+    args.remove(0);
+
+    let arguments = parse_cli_arguments(args);
+
     let _storage = Arc::new(AsyncMutex::new(Storage::new()));
+    let _config = Arc::new(AsyncMutex::new(Config::new()));
 
     let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
 
+    process_configuration_arguments(arguments, _config.clone()).await;
+
     loop {
         let stream = listener.accept().await;
-        let _storage = _storage.clone();
+        let storage = _storage.clone();
+        let config = _config.clone();
 
         match stream {
-            Ok((stream, _)) => handle_connection(stream, _storage),
+            Ok((stream, _)) => handle_connection(stream, storage, config),
             Err(e) => {
                 println!("error: {}", e);
             }
@@ -32,7 +49,11 @@ async fn main() {
 }
 
 /** Handles TCP connections to Redis Server */
-fn handle_connection(mut stream: TcpStream, storage: Arc<AsyncMutex<Storage>>) {
+fn handle_connection(
+    mut stream: TcpStream,
+    storage: Arc<AsyncMutex<Storage>>,
+    config: Arc<AsyncMutex<Config>>,
+) {
     println!("Accepted new connection");
     tokio::spawn(async move {
         loop {
@@ -96,6 +117,18 @@ fn handle_connection(mut stream: TcpStream, storage: Arc<AsyncMutex<Storage>>) {
                                 None => serialize_response(RedisValue::BulkString(None)),
                             };
                             println!("Response: {:?}", response);
+                            if let Err(e) = stream.write_all(response.as_bytes()).await {
+                                println!("Failed to write to stream; err = {:?}", e);
+                                break;
+                            }
+                        }
+                        Ok(Command::ConfigGet(entry)) => {
+                            let config = config.lock().await;
+                            let value = config.get(&entry);
+                            let mut result = Vec::new();
+                            result.push(entry);
+                            result.push(value.unwrap_or_default());
+                            let response = serialize_response(RedisValue::Array(result));
                             if let Err(e) = stream.write_all(response.as_bytes()).await {
                                 println!("Failed to write to stream; err = {:?}", e);
                                 break;

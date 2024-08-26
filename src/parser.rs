@@ -6,12 +6,14 @@ pub enum Command {
     Echo(String),
     Set(String, String, Option<Vec<(String, String)>>),
     Get(String),
+    ConfigGet(String),
     Unknown(String),
 }
 
 pub enum RedisValue {
     SimpleString(String),
     BulkString(Option<String>),
+    Array(Vec<String>),
     Error(String),
 }
 
@@ -26,7 +28,13 @@ pub fn parse_command(command_input: &[u8]) -> Result<Command, String> {
         return Err("Invalid RESP format".to_string());
     }
 
-    let command = parts[2].to_uppercase();
+    let mut command = parts[2].to_uppercase();
+
+    // Check if the command is CONFIG
+    if command.starts_with("CONFIG") {
+        command = format!("{} {}", command, parts[4].to_uppercase());
+    }
+
     match command.as_str() {
         "ECHO" => {
             if parts.len() < 6 {
@@ -96,6 +104,13 @@ pub fn parse_command(command_input: &[u8]) -> Result<Command, String> {
                 Ok(Command::Get(parts[4].to_string()))
             }
         }
+        "CONFIG GET" => {
+            if parts.len() < 5 {
+                return Err("Invalid CONFIG GET command format".to_string());
+            } else {
+                Ok(Command::ConfigGet(parts[6].to_string()))
+            }
+        }
         _ => Ok(Command::Unknown(command)),
     }
 }
@@ -107,6 +122,13 @@ pub fn serialize_response(value: RedisValue) -> String {
         RedisValue::BulkString(Some(s)) => format!("${}\r\n{}\r\n", s.len(), s),
         RedisValue::BulkString(None) => "$-1\r\n".to_string(),
         RedisValue::Error(s) => format!("-{}\r\n", s),
+        RedisValue::Array(values) => {
+            let mut response = format!("*{}\r\n", values.len());
+            for value in values {
+                response.push_str(&serialize_response(RedisValue::BulkString(Some(value))));
+            }
+            response
+        }
     }
 }
 
