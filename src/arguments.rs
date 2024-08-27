@@ -1,6 +1,7 @@
 use crate::config::Config;
 use std::fs::create_dir_all;
 use std::fs::File;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -41,13 +42,17 @@ pub async fn process_configuration_arguments(
         println!("DBFilename: {}", argument_value);
         config.set("dbfilename".to_string(), argument_value);
 
-        // Create the file if it doesn't exist
         let file_path = format!(
           "{}/{}",
           config.get("dir").unwrap(),
           config.get("dbfilename").unwrap()
         );
-        File::create(file_path).unwrap();
+        // Create the file if it doesn't exist
+        let file_path = Path::new(&file_path);
+        // check if the file exists
+        if !file_path.exists() {
+          File::create(file_path).unwrap();
+        }
       }
       _ => {
         eprintln!("Unknown option: {}", argument);

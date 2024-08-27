@@ -17,6 +17,9 @@ use config::Config;
 pub mod arguments;
 use arguments::{parse_cli_arguments, process_configuration_arguments};
 
+pub mod database;
+use database::populate_hot_storage;
+
 #[tokio::main]
 async fn main() {
   println!("Starting Redis Server!");
@@ -27,12 +30,12 @@ async fn main() {
 
   let arguments = parse_cli_arguments(args);
 
-  let _storage = Arc::new(AsyncMutex::new(Storage::new()));
   let _config = Arc::new(AsyncMutex::new(Config::new()));
-
   let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
 
+  let _storage = Arc::new(AsyncMutex::new(Storage::new()));
   process_configuration_arguments(arguments, _config.clone()).await;
+  populate_hot_storage(&_storage, &_config).await;
 
   loop {
     let stream = listener.accept().await;
