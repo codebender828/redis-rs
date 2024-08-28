@@ -12,7 +12,9 @@
 use crate::{config::Config, storage::Storage};
 use dashmap::DashMap;
 use log::{debug, error, warn};
-use std::io::{Error, ErrorKind};
+use std::fs::File;
+use std::io::{Error, ErrorKind, Read};
+use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{str, sync::Arc};
 use tokio::sync::Mutex;
@@ -21,6 +23,17 @@ use tokio::sync::Mutex;
 enum AuxValue {
   String(String),
   Integer(i64),
+}
+
+fn read_file(file_path: String) -> Vec<u8> {
+  let path = Path::new(&file_path);
+  if !path.exists() {
+    return String::from("Not Found!").into();
+  }
+  let mut file_content = Vec::new();
+  let mut file = File::open(&file_path).expect("Unable to open file");
+  file.read_to_end(&mut file_content).expect("Unable to read");
+  file_content
 }
 
 pub async fn populate_hot_storage(storage: &Arc<Mutex<Storage>>, config: &Arc<Mutex<Config>>) {
@@ -35,11 +48,12 @@ pub async fn populate_hot_storage(storage: &Arc<Mutex<Storage>>, config: &Arc<Mu
   let rdb_file_path = format!("{}/{}", directory, dbfilename);
 
   // Read the file and populate the storage
-  let rdb_contents = std::fs::read_to_string(rdb_file_path).unwrap();
-  let rdb_contents = rdb_contents.to_string().to_uppercase();
-  println!("Contents: {}", rdb_contents);
+  // let rdb_contents = std::fs::read_to_string(rdb_file_path).unwrap();
+  let rdb_contents = read_file(rdb_file_path);
+  let rdb_contents_string = String::from_utf8_lossy(&rdb_contents).to_uppercase();
+  println!("Contents: {}", rdb_contents_string);
 
-  let rdb_data = hex::decode(rdb_contents.trim()).expect("Failed to decode RDB file");
+  let rdb_data = hex::decode(rdb_contents_string.trim()).expect("Failed to decode RDB file");
   let mut parser = RDBParser::new(rdb_data);
 
   if let Err(e) = parser.parse() {
@@ -76,6 +90,8 @@ pub async fn populate_hot_storage(storage: &Arc<Mutex<Storage>>, config: &Arc<Mu
         vec![("EX".to_string(), duration.as_secs().to_string())],
       );
     });
+
+  drop(parser)
 }
 
 /// Parse the RDB version from the RDB file
