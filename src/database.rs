@@ -49,11 +49,27 @@ pub async fn populate_hot_storage(storage: &Arc<Mutex<Storage>>, config: &Arc<Mu
 
   // Read the file and populate the storage
   // let rdb_contents = std::fs::read_to_string(rdb_file_path).unwrap();
-  let rdb_contents = read_file(rdb_file_path);
-  let rdb_contents_string = String::from_utf8_lossy(&rdb_contents).to_uppercase();
-  println!("Contents: {}", rdb_contents_string);
+  // let rdb_contents = read_file(rdb_file_path);
+  // let rdb_contents_string = String::from_utf8_lossy(&rdb_contents).to_uppercase();
 
-  let rdb_data = hex::decode(rdb_contents_string.trim()).expect("Failed to decode RDB file");
+  let buffer = match File::open(&rdb_file_path) {
+    Ok(f) => {
+      // let mut buffer: [u8; 1024] = [0; 1024];
+      let mut reader = std::io::BufReader::new(f);
+      let mut str = String::new();
+      reader.read_to_string(&mut str).expect("cannot read string");
+      // reader.read(&mut buffer).unwrap();
+      str
+    }
+    Err(e) => {
+      eprintln!("Failed to open RDB file: {}", e);
+      return;
+    }
+  };
+
+  // let rdb_data = hex::decode(buffer).unwrap();
+  let rdb_data = hex::decode(buffer.trim()).expect("Failed to decode RDB file");
+  println!("Contents: {:x?}", rdb_data);
   let mut parser = RDBParser::new(rdb_data);
 
   if let Err(e) = parser.parse() {
