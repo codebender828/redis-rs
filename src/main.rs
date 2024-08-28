@@ -36,7 +36,13 @@ async fn main() {
 
   let _storage = Arc::new(AsyncMutex::new(Storage::new()));
   process_configuration_arguments(arguments, _config.clone()).await;
-  populate_hot_storage(&_storage, &_config).await;
+
+  {
+    let config = _config.lock().await;
+    if !config.get("dir").is_none() && !config.get("dbfilename").is_none() {
+      populate_hot_storage(&_storage, &_config).await;
+    }
+  }
 
   loop {
     let stream = listener.accept().await;
