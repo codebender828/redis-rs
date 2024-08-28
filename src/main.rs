@@ -1,5 +1,4 @@
 use env_logger::Env;
-use log::info;
 use parser::{parse_command, serialize_response, Command, RedisValue};
 use std::env;
 use std::sync::Arc;
@@ -39,10 +38,7 @@ async fn main() {
   process_configuration_arguments(arguments, _config.clone()).await;
 
   // Only populate hot storage if the configuration is set
-  let config = _config.lock().await;
-  if !config.get("dir").is_none() && !config.get("dbfilename").is_none() {
-    populate_hot_storage(&_storage, &_config).await;
-  }
+  populate_hot_storage(&_storage, &_config).await;
 
   loop {
     let stream = listener.accept().await;
