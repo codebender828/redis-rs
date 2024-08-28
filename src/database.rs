@@ -16,6 +16,7 @@ use std::fs::File;
 use std::io::{Error, ErrorKind, Read};
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::vec;
 use std::{str, sync::Arc};
 use tokio::sync::Mutex;
 
@@ -56,9 +57,10 @@ pub async fn populate_hot_storage(storage: &Arc<Mutex<Storage>>, config: &Arc<Mu
     Ok(f) => {
       // let mut buffer: [u8; 1024] = [0; 1024];
       let mut reader = std::io::BufReader::new(f);
-      let mut str = String::new();
-      reader.read_to_string(&mut str).expect("cannot read string");
-      // reader.read(&mut buffer).unwrap();
+
+      let mut buffer = vec![];
+      reader.read_to_end(&mut buffer).expect("cannot read string");
+      let str = String::from_utf8_lossy(&buffer).to_string();
       str
     }
     Err(e) => {
