@@ -54,6 +54,28 @@ pub async fn populate_hot_storage(storage: &Arc<Mutex<Storage>>, config: &Arc<Mu
       parser.expiry_entries.len()
     );
   }
+
+  parser.entries.iter().for_each(|(key, value)| {
+    let key = RDBParser::stringify(key);
+    let value = RDBParser::stringify(value);
+    storage.set(key, value, vec![]);
+  });
+
+  parser
+    .expiry_entries
+    .iter()
+    .for_each(|(key, value, expiry_time)| {
+      let key = RDBParser::stringify(key);
+      let value = RDBParser::stringify(value);
+      let duration = expiry_time
+        .duration_since(UNIX_EPOCH)
+        .expect("Failed to calculate duration");
+      storage.set(
+        key,
+        value,
+        vec![("EX".to_string(), duration.as_secs().to_string())],
+      );
+    });
 }
 
 /// Parse the RDB version from the RDB file
