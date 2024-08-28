@@ -1,51 +1,27 @@
 /**
  * This file is responsible for interacting with the raw RDB file
- *
  * At a high level, the RDB file format has the following structure
- * ----------------------------#
- *  52 45 44 49 53              # Magic String "REDIS"
- *  30 30 30 33                 # RDB Version Number as ASCII string. "0003" = 3
- *  ----------------------------
- *  FA                          # Auxiliary field
- *  $string-encoded-key         # May contain arbitrary metadata
- *  $string-encoded-value       # such as Redis version, creation time, used memory, ...
- *  ----------------------------
- *  FE 00                       # Indicates database selector. db number = 00
- *  FB                          # Indicates a resizedb field
- *  $length-encoded-int         # Size of the corresponding hash table
- *  $length-encoded-int         # Size of the corresponding expire hash table
- *  ----------------------------# Key-Value pair starts
- *  FD $unsigned-int            # "expiry time in seconds", followed by 4 byte unsigned int
- *  $value-type                 # 1 byte flag indicating the type of value
- *  $string-encoded-key         # The key, encoded as a redis string
- *  $encoded-value              # The value, encoding depends on $value-type
- *  ----------------------------
- *  FC $unsigned long           # "expiry time in ms", followed by 8 byte unsigned long
- *  $value-type                 # 1 byte flag indicating the type of value
- *  $string-encoded-key         # The key, encoded as a redis string
- *  $encoded-value              # The value, encoding depends on $value-type
- *  ----------------------------
- *  $value-type                 # key-value pair without expiry
- *  $string-encoded-key
- *  $encoded-value
- *  ----------------------------
- *  FE $length-encoding         # Previous db ends, next db starts.
- *  ----------------------------
- *  ...                         # Additional key-value pairs, databases, ... *
- *  FF                          ## End of RDB file indicator
- *  8-byte-checksum             ## CRC64 checksum of the entire file.
- * ----------------------------#
  *
- * An example file looks like this:
+ * @source https://rdb.fnordig.de/file_format.html
+ * Example file:
+ * ```rdb
  * 524544495330303130fa0972656469732d76657206372e302e3130fa0a72656469732d62697473c040fa056374696d65c2d5bbcc66fa08757365642d6d656dc2d0171100fa08616f662d62617365c000fe00fb0201fc86de7dad91010000000362617a037a61670003666f6f03626172ff20b3abf967cff893
+ * ```
  *
  */
-use crate::{config::Config, parser, storage::Storage};
+use crate::{config::Config, storage::Storage};
+use dashmap::DashMap;
 use log::{debug, error, warn};
 use std::io::{Error, ErrorKind};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::{panic, str, sync::Arc, time::Instant};
+use std::{str, sync::Arc};
 use tokio::sync::Mutex;
+
+#[derive(Debug, Clone)]
+enum AuxValue {
+  String(String),
+  Integer(i64),
+}
 
 pub async fn populate_hot_storage(storage: &Arc<Mutex<Storage>>, config: &Arc<Mutex<Config>>) {
   // Extract the directory and dbfilename from the configuration
@@ -103,9 +79,7 @@ pub struct RDBParser {
   data: Vec<u8>,
   keys: Vec<Vec<u8>>,
   rdb_version: u32,
-  redis_version: Vec<u8>,
-  creation_time: Vec<u8>,
-  aux_fields: Vec<(Vec<u8>, Vec<u8>)>,
+  aux_fields: DashMap<String, AuxValue>,
   entries: Vec<(Vec<u8>, Vec<u8>)>,
   expiry_entries: Vec<(Vec<u8>, Vec<u8>, SystemTime)>,
 }
@@ -118,9 +92,7 @@ impl RDBParser {
       keys: Vec::new(),
       entries: Vec::new(),
       rdb_version: 0,
-      redis_version: Vec::new(),
-      creation_time: Vec::new(),
-      aux_fields: Vec::new(),
+      aux_fields: DashMap::new(),
       expiry_entries: Vec::new(),
     }
   }
@@ -138,15 +110,11 @@ impl RDBParser {
     debug!("RDB version: {}", self.rdb_version);
 
     let (aux_fields, index) = self.parse_auxiliary_fields(&self.data)?;
+
+    let auxiliary_fields = aux_fields.clone();
+    self.print_rdb_info(self.rdb_version, auxiliary_fields);
+
     self.aux_fields = aux_fields;
-    debug!(
-      "Parsed {} auxiliary fields. Index after aux fields: {}",
-      self.aux_fields.len(),
-      index
-    );
-
-    // Process auxiliary fields...
-
     // Parse the database entries
     let (entries, expiry_entries) = self.process_entries(&self.data[index..]).map_err(|e| {
       error!("Failed to process entries: {}", e);
@@ -165,6 +133,34 @@ impl RDBParser {
     Ok(())
   }
 
+  pub fn stringify(value: &[u8]) -> String {
+    match std::str::from_utf8(value) {
+      Ok(s) => s.to_string(),
+      Err(e) => format!("Non-UTF8 data: {:?} (Error: {})", value, e),
+    }
+  }
+
+  /// Print the RDB file information
+  fn print_rdb_info(&self, version: u32, aux_fields: DashMap<String, AuxValue>) {
+    println!("RDB file version: {}", version);
+    println!("Auxiliary Fields:");
+    for entry in aux_fields.iter() {
+      match entry.value() {
+        AuxValue::String(s) => println!("  {}: {}", entry.key(), s),
+        AuxValue::Integer(i) => println!("  {}: {}", entry.key(), i),
+      }
+    }
+
+    // Explicitly print redis-bits if it exists
+    if let Some(entry) = aux_fields.get("redis-bits") {
+      if let AuxValue::Integer(redis_bits) = entry.value() {
+        println!("\nRedis Bits: {}", redis_bits);
+      }
+    } else {
+      println!("\nRedis Bits: Not found in auxiliary fields");
+    }
+  }
+
   /// Extract the RDB version from RDB.
   pub fn parse_rdb_version(&self, data: &[u8]) -> Result<u32, &'static str> {
     if data.len() < 9 {
@@ -180,9 +176,6 @@ impl RDBParser {
     let version = str::from_utf8(&data[5..9]).map_err(|_| "Invalid RDB version")?;
     version.parse::<u32>().map_err(|_| "Invalid RDB version")
   }
-
-  /// Parse the auxiliary fields from the RDB file
-  pub fn parse_aux_fields(&mut self) {}
 
   /// decode the length of a length encoded string
   fn decode_length(&self, data: &[u8]) -> Result<(usize, usize), Error> {
@@ -332,8 +325,8 @@ impl RDBParser {
   pub fn parse_auxiliary_fields(
     &self,
     data: &[u8],
-  ) -> Result<(Vec<(Vec<u8>, Vec<u8>)>, usize), Error> {
-    let mut fields: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+  ) -> Result<(DashMap<String, AuxValue>, usize), Error> {
+    let fields = DashMap::new();
     let mut index = 9; // Start after the RDB version
 
     while index < data.len() && data[index] == 0xFA {
@@ -343,20 +336,24 @@ impl RDBParser {
       let (key_bytes, key) = self.decode_length_encoded_data(&data[index..])?;
       index += key_bytes;
 
-      // Decode value
-      let value = if data[index] >= 0xC0 && data[index] <= 0xC3 {
-        // Integer encoding
-        let (int_bytes, int_value) = self.decode_integer(&data[index..])?;
-        index += int_bytes;
-        int_value.to_le_bytes().to_vec()
-      } else {
-        // String encoding
-        let (str_bytes, str_value) = self.decode_length_encoded_data(&data[index..])?;
-        index += str_bytes;
-        str_value
-      };
+      let key_string = str::from_utf8(&key)
+        .map_err(|e| Error::new(ErrorKind::InvalidData, e))?
+        .to_string();
 
-      fields.push((key, value));
+      // check if value is integrer
+      if (data[index] >= 0xC0 && data[index] <= 0xC3) || (data[index] >= 192 && data[index] <= 223)
+      {
+        let (int_bytes, int_value) = self.decode_integer(&data[index..])?;
+        fields.insert(key_string, AuxValue::Integer(int_value));
+        index += int_bytes;
+      } else {
+        let (value_bytes, value) = self.decode_length_encoded_data(&data[index..])?;
+        fields.insert(
+          key_string,
+          AuxValue::String(value.iter().map(|&x| x as char).collect()),
+        );
+        index += value_bytes;
+      }
     }
 
     Ok((fields, index))
@@ -491,39 +488,6 @@ impl RDBParser {
         format!("Unknown or unsupported encoding: {}", value_type),
       )),
     }
-  }
-
-  /// Process expire keys
-  /// This function is responsible for processing keys that have an expiry time
-  fn process_expiry_entry(
-    &mut self,
-    data: &[u8],
-    expiry: SystemTime,
-    index: &mut usize,
-  ) -> Result<(), Error> {
-    let value_type = data[*index];
-    *index += 1;
-
-    let (key_bytes, key) = self.decode_length_encoded_data(&data[*index..])?;
-    *index += key_bytes;
-
-    let value = self.decode_value(data, value_type, index)?;
-    self.expiry_entries.push((key, value, expiry));
-    Ok(())
-  }
-
-  /// Process non-expiry keys
-  /// This function is responsible for processing keys that do not have an expiry time
-  pub fn process_non_expiry_entry(&mut self, data: &[u8], index: &mut usize) -> Result<(), Error> {
-    let value_type = data[*index];
-    *index += 1;
-
-    let (key_bytes, key) = self.decode_length_encoded_data(&data[*index..])?;
-    *index += key_bytes;
-
-    let value = self.decode_value(data, value_type, index)?;
-    self.entries.push((key, value));
-    Ok(())
   }
 
   /// Process all database entries
