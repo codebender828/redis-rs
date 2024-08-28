@@ -1,4 +1,5 @@
 use env_logger::Env;
+use log::info;
 use parser::{parse_command, serialize_response, Command, RedisValue};
 use std::env;
 use std::sync::Arc;
@@ -37,11 +38,10 @@ async fn main() {
   let _storage = Arc::new(AsyncMutex::new(Storage::new()));
   process_configuration_arguments(arguments, _config.clone()).await;
 
-  {
-    let config = _config.lock().await;
-    if !config.get("dir").is_none() && !config.get("dbfilename").is_none() {
-      populate_hot_storage(&_storage, &_config).await;
-    }
+  // Only populate hot storage if the configuration is set
+  let config = _config.lock().await;
+  if !config.get("dir").is_none() && !config.get("dbfilename").is_none() {
+    populate_hot_storage(&_storage, &_config).await;
   }
 
   loop {
@@ -132,6 +132,15 @@ fn handle_connection(
               result.push(entry);
               result.push(value.unwrap_or_default());
               let response = serialize_response(RedisValue::Array(result));
+              if let Err(e) = stream.write_all(response.as_bytes()).await {
+                println!("Failed to write to stream; err = {:?}", e);
+                break;
+              }
+            }
+            Ok(Command::KEYS(pattern)) => {
+              let storage = storage.lock().await;
+              let keys = storage.keys(&pattern);
+              let response = serialize_response(RedisValue::Array(keys));
               if let Err(e) = stream.write_all(response.as_bytes()).await {
                 println!("Failed to write to stream; err = {:?}", e);
                 break;

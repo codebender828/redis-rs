@@ -1,4 +1,5 @@
 use dashmap::DashMap;
+use log::info;
 use std::time::Duration;
 use tokio::time::Instant;
 
@@ -94,5 +95,34 @@ impl Storage {
         Some(result.value.clone())
       }
     })
+  }
+
+  /// Retrieve all the keys that match the pattern
+  pub fn keys(&self, pattern: &str) -> Vec<String> {
+    info!("Extracting keys that match the pattern: {}", pattern);
+
+    match pattern {
+      "" => return vec![],
+      "*" => {
+        return self
+          .storage
+          .iter()
+          .map(|entry| entry.key().clone())
+          .collect();
+      }
+      _ => {
+        return self
+          .storage
+          .iter()
+          .filter_map(|entry| {
+            if entry.key().contains(pattern) {
+              Some(entry.key().clone())
+            } else {
+              None
+            }
+          })
+          .collect();
+      }
+    }
   }
 }

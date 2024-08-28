@@ -8,6 +8,7 @@ pub enum Command {
   GET(String),
   CONFIGGET(String),
   UNKNOWN(String),
+  KEYS(String),
 }
 
 pub enum RedisValue {
@@ -107,6 +108,13 @@ pub fn parse_command(command_input: &[u8]) -> Result<Command, String> {
         return Err("Invalid CONFIG GET command format".to_string());
       } else {
         Ok(Command::CONFIGGET(parts[6].to_string()))
+      }
+    }
+    "KEYS" => {
+      if parts.len() < 5 {
+        return Err("Invalid KEYS command format".to_string());
+      } else {
+        Ok(Command::KEYS(parts[4].to_string()))
       }
     }
     _ => Ok(Command::UNKNOWN(command)),
