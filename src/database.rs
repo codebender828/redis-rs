@@ -41,8 +41,9 @@
  *
  */
 use crate::{config::Config, parser, storage::Storage};
+use log::{debug, error, warn};
 use std::io::{Error, ErrorKind};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{panic, str, sync::Arc, time::Instant};
 use tokio::sync::Mutex;
 
@@ -62,24 +63,21 @@ pub async fn populate_hot_storage(storage: &Arc<Mutex<Storage>>, config: &Arc<Mu
   let rdb_contents = rdb_contents.to_string().to_uppercase();
   println!("Contents: {}", rdb_contents);
 
-  // Extract the keys that do not have an expiry time
-  let keys = extract_non_expire_keys_from_rdb(&rdb_contents);
-}
-
-pub fn extract_non_expire_keys_from_rdb(rdb_contents: &String) {
-  // Extract the keys that do not have an expiry time
-  // from the RDB file
-
-  if rdb_contents.is_empty() {
-    // Early return if it comes across an empty file
-    return;
-  }
-
   let rdb_data = hex::decode(rdb_contents.trim()).expect("Failed to decode RDB file");
-
   let mut parser = RDBParser::new(rdb_data);
-  let _db = parser.parse();
-  let _entries = parser.process_entries(&parser.data.clone());
+
+  if let Err(e) = parser.parse() {
+    eprintln!("Error parsing RDB file: {}", e);
+    dbg!(e);
+    // Handle the error appropriately
+  } else {
+    // Use the parsed data as needed
+    println!(
+      "Parsed {} non-expiring entries and {} expiring entries",
+      parser.entries.len(),
+      parser.expiry_entries.len()
+    );
+  }
 }
 
 /// Parse the RDB version from the RDB file
@@ -103,11 +101,11 @@ pub fn parse_rdb_version(data: &[u8]) -> Result<u32, &'static str> {
 pub struct RDBParser {
   /// Raw file data for the RDB file
   data: Vec<u8>,
-  keys: Vec<String>,
+  keys: Vec<Vec<u8>>,
   rdb_version: u32,
-  redis_version: String,
-  creation_time: String,
-  aux_fields: Vec<(String, String)>,
+  redis_version: Vec<u8>,
+  creation_time: Vec<u8>,
+  aux_fields: Vec<(Vec<u8>, Vec<u8>)>,
   entries: Vec<(Vec<u8>, Vec<u8>)>,
   expiry_entries: Vec<(Vec<u8>, Vec<u8>, SystemTime)>,
 }
@@ -120,40 +118,51 @@ impl RDBParser {
       keys: Vec::new(),
       entries: Vec::new(),
       rdb_version: 0,
-      redis_version: String::new(),
-      creation_time: String::new(),
+      redis_version: Vec::new(),
+      creation_time: Vec::new(),
       aux_fields: Vec::new(),
       expiry_entries: Vec::new(),
     }
   }
 
   /// Parse the RDB file
-  pub fn parse(&mut self) {
-    let rdb_version = match self.parse_rdb_version(&self.data) {
-      Ok(version) => version,
-      Err(e) => {
-        eprintln!("Error parsing RDB version: {}", e);
-        return;
-      }
-    };
+  pub fn parse(&mut self) -> Result<(), Error> {
+    debug!(
+      "Starting to parse RDB file. Total data length: {}",
+      self.data.len()
+    );
 
-    let aux_fields = self
-      .parse_auxiliary_fields(&self.data)
-      .expect("Unable to parse auxiliary fields");
+    self.rdb_version = self
+      .parse_rdb_version(&self.data)
+      .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
+    debug!("RDB version: {}", self.rdb_version);
 
-    self.rdb_version = rdb_version;
-    self.aux_fields = aux_fields.clone();
+    let (aux_fields, index) = self.parse_auxiliary_fields(&self.data)?;
+    self.aux_fields = aux_fields;
+    debug!(
+      "Parsed {} auxiliary fields. Index after aux fields: {}",
+      self.aux_fields.len(),
+      index
+    );
 
-    // Iterate over all aux fields and extract the Redis version and creation time
-    for (key, value) in aux_fields {
-      // use pattern matching
-      match key.as_str() {
-        "redis-ver" => self.redis_version = value,
-        "ctime" => self.creation_time = value,
-        _ => {}
-      }
-    }
-    dbg!(self);
+    // Process auxiliary fields...
+
+    // Parse the database entries
+    let (entries, expiry_entries) = self.process_entries(&self.data[index..]).map_err(|e| {
+      error!("Failed to process entries: {}", e);
+      e
+    })?;
+
+    // Add the processed entries to self
+    self.entries.extend(entries);
+    self.expiry_entries.extend(expiry_entries);
+
+    debug!(
+      "Finished parsing RDB file. Regular entries: {}, Expiry entries: {}",
+      self.entries.len(),
+      self.expiry_entries.len()
+    );
+    Ok(())
   }
 
   /// Extract the RDB version from RDB.
@@ -177,45 +186,60 @@ impl RDBParser {
 
   /// decode the length of a length encoded string
   fn decode_length(&self, data: &[u8]) -> Result<(usize, usize), Error> {
-    let first_byte = data[0];
+    if data.is_empty() {
+      return Err(Error::new(
+        ErrorKind::UnexpectedEof,
+        "Empty data when decoding length",
+      ));
+    }
 
-    dbg!(first_byte);
+    let first_byte = data[0];
+    debug!("Decoding length, first byte: {}", first_byte);
 
     match first_byte {
       0..=63 => Ok((1, first_byte as usize)),
       64..=127 => {
-        let second_byte = data[1];
-
         if data.len() < 2 {
           return Err(Error::new(
-            ErrorKind::InvalidData,
-            "Insufficient data for medium length string",
+            ErrorKind::UnexpectedEof,
+            "Insufficient data for medium length",
           ));
         }
-        let length = ((first_byte as usize & 0x3f) << 8) | second_byte as usize;
+        let length = ((first_byte as usize & 0x3f) << 8) | data[1] as usize;
         Ok((2, length))
       }
-      128 => {
+      128..=191 => {
+        if data.len() < 4 {
+          return Err(Error::new(
+            ErrorKind::UnexpectedEof,
+            "Insufficient data for long length",
+          ));
+        }
+        let length = ((first_byte as usize & 0x3f) << 24)
+          | ((data[1] as usize) << 16)
+          | ((data[2] as usize) << 8)
+          | data[3] as usize;
+        Ok((4, length))
+      }
+      192..=253 => Ok((1, (first_byte as usize - 192))),
+      254 => {
         if data.len() < 5 {
           return Err(Error::new(
-            ErrorKind::InvalidData,
-            "Insufficient data for long length string",
+            ErrorKind::UnexpectedEof,
+            "Insufficient data for 32-bit length",
           ));
         }
         let length = u32::from_le_bytes([data[1], data[2], data[3], data[4]]) as usize;
         Ok((5, length))
       }
-      192..=255 => {
-        // Special integer encodign
-        Ok((1, (first_byte & 0x3f) as usize))
-      }
-      _ => Err(Error::new(
+      255 => Err(Error::new(
         ErrorKind::InvalidData,
-        format!("Invalid length encoding: {}", first_byte),
+        "Invalid length encoding (255)",
       )),
     }
   }
 
+  /// Decode an integer from the RDB file
   pub fn decode_integer(&self, data: &[u8]) -> Result<(usize, i64), Error> {
     if data.is_empty() {
       return Err(Error::new(ErrorKind::InvalidData, "Empty data"));
@@ -266,41 +290,79 @@ impl RDBParser {
   }
 
   /// Decode a length encoded data
-  fn decode_length_encoded_data(&self, data: &[u8]) -> (usize, Vec<u8>) {
-    let (length_bytes, length) = self
-      .decode_length(data)
-      .expect("Could not decode length encoded string Invalid string encoding");
-    let binary_data = data[length_bytes..length_bytes + length].to_vec();
-    (length_bytes + length, binary_data)
+  fn decode_length_encoded_data(&self, data: &[u8]) -> Result<(usize, Vec<u8>), Error> {
+    debug!("Decoding length-encoded data. Data length: {}", data.len());
+
+    if data.is_empty() {
+      return Err(Error::new(
+        ErrorKind::UnexpectedEof,
+        "Empty data when decoding length-encoded data",
+      ));
+    }
+
+    let (length_bytes, length) = self.decode_length(data)?;
+    debug!(
+      "Decoded length: {} bytes, length encoding used {} bytes",
+      length, length_bytes
+    );
+
+    let total_bytes = length_bytes + length;
+
+    if data.len() < total_bytes {
+      error!(
+        "Insufficient data for encoded string. Need {} bytes, have {}",
+        total_bytes,
+        data.len()
+      );
+      return Err(Error::new(
+        ErrorKind::UnexpectedEof,
+        format!(
+          "Insufficient data for encoded string. Need {} bytes, have {}",
+          total_bytes,
+          data.len()
+        ),
+      ));
+    }
+
+    let result = data[length_bytes..total_bytes].to_vec();
+    Ok((total_bytes, result))
   }
 
   /// Parse the auxiliary fields from the RDB file
-  pub fn parse_auxiliary_fields(&self, data: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, Error> {
+  pub fn parse_auxiliary_fields(
+    &self,
+    data: &[u8],
+  ) -> Result<(Vec<(Vec<u8>, Vec<u8>)>, usize), Error> {
     let mut fields: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-    let mut index = 9;
+    let mut index = 9; // Start after the RDB version
 
     while index < data.len() && data[index] == 0xFA {
       index += 1; // Skip the 0xFA marker
-      let (key_bytes, key) = self.decode_length_encoded_data(&data[index..]);
+
+      // Decode key
+      let (key_bytes, key) = self.decode_length_encoded_data(&data[index..])?;
       index += key_bytes;
 
-      // Check if the value is an integer
-      if (data[index] >= 0xC0 && data[index] <= 0xC3)
-        || (data[index] >= 0xC0 && data[index] <= 0xDF)
-      {
-        let (value_bytes, value) = self.decode_integer(&data[index..])?;
-        fields.push((key, value.to_le_bytes().to_vec()));
-        index += value_bytes;
+      // Decode value
+      let value = if data[index] >= 0xC0 && data[index] <= 0xC3 {
+        // Integer encoding
+        let (int_bytes, int_value) = self.decode_integer(&data[index..])?;
+        index += int_bytes;
+        int_value.to_le_bytes().to_vec()
       } else {
-        let (value_bytes, value) = self.decode_length_encoded_data(&data[index..]);
-        index += value_bytes;
-        fields.push((key, value));
-      }
+        // String encoding
+        let (str_bytes, str_value) = self.decode_length_encoded_data(&data[index..])?;
+        index += str_bytes;
+        str_value
+      };
+
+      fields.push((key, value));
     }
 
-    Ok(fields)
+    Ok((fields, index))
   }
 
+  /// Decode the value from the RDB file
   pub fn decode_value(
     &self,
     data: &[u8],
@@ -310,7 +372,7 @@ impl RDBParser {
     match value_type {
       0 => {
         // String encoding
-        let (value_bytes, value) = self.decode_length_encoded_data(&data[*index..]);
+        let (value_bytes, value) = self.decode_length_encoded_data(&data[*index..])?;
         *index += value_bytes;
         Ok(value)
       }
@@ -320,7 +382,7 @@ impl RDBParser {
         *index += length_bytes;
         let mut list = Vec::new();
         for _ in 0..length {
-          let (value_bytes, value) = self.decode_length_encoded_data(&data[*index..]);
+          let (value_bytes, value) = self.decode_length_encoded_data(&data[*index..])?;
           *index += value_bytes;
           list.extend_from_slice(&value);
           list.push(b',');
@@ -337,7 +399,7 @@ impl RDBParser {
         *index += length_bytes;
         let mut set = Vec::new();
         for _ in 0..length {
-          let (value_bytes, value) = self.decode_length_encoded_data(&data[*index..]);
+          let (value_bytes, value) = self.decode_length_encoded_data(&data[*index..])?;
           *index += value_bytes;
           set.extend_from_slice(&value);
           set.push(b',');
@@ -353,7 +415,7 @@ impl RDBParser {
         *index += length_bytes;
         let mut sorted_set = Vec::new();
         for _ in 0..length {
-          let (member_bytes, member) = self.decode_length_encoded_data(&data[*index..]);
+          let (member_bytes, member) = self.decode_length_encoded_data(&data[*index..])?;
           *index += member_bytes;
           let (score_bytes, score) = self.decode_length(&data[*index..]).unwrap();
           *index += score_bytes;
@@ -375,9 +437,9 @@ impl RDBParser {
         let mut hash = Vec::new();
 
         for _ in 0..length {
-          let (field_bytes, field) = self.decode_length_encoded_data(&data[*index..]);
+          let (field_bytes, field) = self.decode_length_encoded_data(&data[*index..])?;
           *index += field_bytes;
-          let (value_bytes, value) = self.decode_length_encoded_data(&data[*index..]);
+          let (value_bytes, value) = self.decode_length_encoded_data(&data[*index..])?;
           *index += value_bytes;
 
           hash.extend_from_slice(&field);
@@ -389,6 +451,40 @@ impl RDBParser {
           hash.pop();
         }
         Ok(hash)
+      }
+      9 | 10 | 11 | 12 => {
+        // Integer encodings
+        let (int_bytes, int_value) = self.decode_integer(&data[*index..])?;
+        *index += int_bytes;
+        Ok(int_value.to_le_bytes().to_vec())
+      }
+      55 => {
+        // This might be a specific Redis encoding. For now, we'll treat it as a raw byte.
+        warn!("Encountered encoding type 55, treating as raw byte");
+        if *index < data.len() {
+          let value = vec![data[*index]];
+          *index += 1;
+          Ok(value)
+        } else {
+          Err(Error::new(
+            ErrorKind::UnexpectedEof,
+            "Unexpected end of data",
+          ))
+        }
+      }
+      // Add handling for the problematic encoding (250)
+      250 => {
+        // This might be a special encoding. For now, we'll treat it as a raw byte.
+        if *index < data.len() {
+          let value = vec![data[*index]];
+          *index += 1;
+          Ok(value)
+        } else {
+          Err(Error::new(
+            ErrorKind::UnexpectedEof,
+            "Unexpected end of data",
+          ))
+        }
       }
       _ => Err(Error::new(
         ErrorKind::InvalidData,
@@ -404,74 +500,118 @@ impl RDBParser {
     data: &[u8],
     expiry: SystemTime,
     index: &mut usize,
-  ) -> (String, String, SystemTime) {
+  ) -> Result<(), Error> {
     let value_type = data[*index];
     *index += 1;
 
-    let (key_bytes, key) = self.decode_length_encoded_data(&data[*index..]);
+    let (key_bytes, key) = self.decode_length_encoded_data(&data[*index..])?;
     *index += key_bytes;
 
-    let value = self.decode_value(data, value_type, index);
-    (key, value, expiry)
+    let value = self.decode_value(data, value_type, index)?;
+    self.expiry_entries.push((key, value, expiry));
+    Ok(())
   }
 
   /// Process non-expiry keys
   /// This function is responsible for processing keys that do not have an expiry time
-  pub fn process_non_expiry_entry(&mut self, data: &[u8], index: &mut usize) -> (String, String) {
+  pub fn process_non_expiry_entry(&mut self, data: &[u8], index: &mut usize) -> Result<(), Error> {
     let value_type = data[*index];
     *index += 1;
 
-    let (key_bytes, key) = self.decode_length_encoded_data(&data[*index..]);
+    let (key_bytes, key) = self.decode_length_encoded_data(&data[*index..])?;
     *index += key_bytes;
 
-    let value = self.decode_value(data, value_type, index);
-    (key, value)
+    let value = self.decode_value(data, value_type, index)?;
+    self.entries.push((key, value));
+    Ok(())
   }
 
   /// Process all database entries
   /// This function is responsible for processing all database entries
-  pub fn process_entries(&mut self, data: &[u8]) {
-    let mut index = 9;
+
+  pub fn process_entries(
+    &self,
+    data: &[u8],
+  ) -> Result<(Vec<(Vec<u8>, Vec<u8>)>, Vec<(Vec<u8>, Vec<u8>, SystemTime)>), Error> {
+    let mut index = 0;
+    let mut entries = Vec::new();
+    let mut expiry_entries = Vec::new();
+
     while index < data.len() {
       match data[index] {
-        // Expiry in seconds
-        0xFD => {
-          index += 1;
-          let expiry = u32::from_le_bytes([
-            data[index],
-            data[index + 1],
-            data[index + 2],
-            data[index + 3],
-          ]);
-          index += 4;
-          let expiry_time = UNIX_EPOCH + std::time::Duration::from_secs(expiry as u64);
-          let entry = self.process_expiry_entry(data, expiry_time, &mut index);
-          self.expiry_entries.push(entry);
+        0xFE => {
+          // Database selector
+          index += 2; // Skip selector and DB number
+          if index < data.len() && data[index] == 0xFB {
+            // Resizedb field
+            index += 1;
+            let (size_bytes, _) = self.decode_length(&data[index..])?;
+            index += size_bytes;
+            let (expire_size_bytes, _) = self.decode_length(&data[index..])?;
+            index += expire_size_bytes;
+          }
         }
-        // Expiry in milliseconds
-        0xFC => {
-          index += 1;
-          let expiry = u64::from_le_bytes([
-            data[index],
-            data[index + 1],
-            data[index + 2],
-            data[index + 3],
-            data[index + 4],
-            data[index + 5],
-            data[index + 6],
-            data[index + 7],
-          ]);
-          index += 8;
-          let expiry_time = UNIX_EPOCH + std::time::Duration::from_millis(expiry);
-          let entry = self.process_expiry_entry(data, expiry_time, &mut index);
-          self.expiry_entries.push(entry);
+        0xFD | 0xFC => {
+          // Expiry time
+          let (expiry_bytes, expiry_time) = if data[index] == 0xFD {
+            (
+              5,
+              SystemTime::UNIX_EPOCH
+                + Duration::from_secs(u32::from_le_bytes([
+                  data[index + 1],
+                  data[index + 2],
+                  data[index + 3],
+                  data[index + 4],
+                ]) as u64),
+            )
+          } else {
+            (
+              9,
+              SystemTime::UNIX_EPOCH
+                + Duration::from_millis(u64::from_le_bytes([
+                  data[index + 1],
+                  data[index + 2],
+                  data[index + 3],
+                  data[index + 4],
+                  data[index + 5],
+                  data[index + 6],
+                  data[index + 7],
+                  data[index + 8],
+                ])),
+            )
+          };
+          index += expiry_bytes;
+          let (key, value) = self.process_key_value_pair(data, &mut index)?;
+          expiry_entries.push((key, value, expiry_time));
         }
-        0xFF => break, // End of RDB file
+        0xFF => {
+          // End of RDB file
+          break;
+        }
         _ => {
-          let entry = self.process_non_expiry_entry(data, &mut index);
-          self.entries.push(entry);
+          // Key-value pair without expiry
+          let (key, value) = self.process_key_value_pair(data, &mut index)?;
+          entries.push((key, value));
         }
       }
     }
+
+    Ok((entries, expiry_entries))
+  }
+
+  fn process_key_value_pair(
+    &self,
+    data: &[u8],
+    index: &mut usize,
+  ) -> Result<(Vec<u8>, Vec<u8>), Error> {
+    let value_type = data[*index];
+    *index += 1;
+
+    let (key_bytes, key) = self.decode_length_encoded_data(&data[*index..])?;
+    *index += key_bytes;
+
+    let value = self.decode_value(data, value_type, index)?;
+
+    Ok((key, value))
   }
 }

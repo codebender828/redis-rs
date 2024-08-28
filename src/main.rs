@@ -1,7 +1,7 @@
-use std::sync::Arc;
-
+use env_logger::Env;
 use parser::{parse_command, serialize_response, Command, RedisValue};
 use std::env;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex as AsyncMutex;
@@ -22,6 +22,7 @@ use database::populate_hot_storage;
 
 #[tokio::main]
 async fn main() {
+  env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
   println!("Starting Redis Server!");
 
   let mut args: Vec<String> = env::args().collect();
