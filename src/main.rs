@@ -29,10 +29,24 @@ async fn main() {
   // Remove the first argument which is the binary name
   args.remove(0);
 
+  let mut port = env::var("PORT").unwrap_or_else(|_| "6379".to_string());
+
   let arguments = parse_cli_arguments(args);
 
   let _config = Arc::new(AsyncMutex::new(Config::new()));
-  let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
+
+  for (argument, argument_value) in arguments.clone() {
+    match argument.as_str() {
+      "--port" => {
+        println!("Port: {}", argument_value);
+        port = argument_value.clone();
+      }
+      _ => {}
+    }
+  }
+
+  let url = format!("127.0.0.1:{}", port);
+  let listener = TcpListener::bind(url).await.unwrap();
 
   let _storage = Arc::new(AsyncMutex::new(Storage::new()));
   process_configuration_arguments(arguments, _config.clone()).await;
