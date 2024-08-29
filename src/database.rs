@@ -87,7 +87,7 @@ pub async fn populate_hot_storage(storage: &Arc<Mutex<Storage>>, config: &Arc<Mu
       storage.set(
         key,
         value,
-        vec![("EX".to_string(), duration.as_secs().to_string())],
+        vec![("EX".to_string(), duration.as_millis().to_string())],
       );
     });
 
