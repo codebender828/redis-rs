@@ -13,7 +13,7 @@ use crate::{config::Config, storage::Storage};
 use dashmap::DashMap;
 use log::{debug, error, info, warn};
 use std::io::{Error, ErrorKind};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::vec;
 use std::{str, sync::Arc};
 use tokio::sync::Mutex;
@@ -81,13 +81,13 @@ pub async fn populate_hot_storage(storage: &Arc<Mutex<Storage>>, config: &Arc<Mu
     .for_each(|(key, value, expiry_time)| {
       let key = RDBParser::stringify(key);
       let value = RDBParser::stringify(value);
-      let duration = expiry_time
+      let expiry_time = expiry_time
         .duration_since(UNIX_EPOCH)
-        .expect("Failed to calculate duration");
+        .unwrap_or_else(|_| Duration::from_secs(0));
       storage.set(
         key,
         value,
-        vec![("EX".to_string(), duration.as_millis().to_string())],
+        vec![("EX".to_string(), expiry_time.as_millis().to_string())],
       );
     });
 
