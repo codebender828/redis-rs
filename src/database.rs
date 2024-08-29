@@ -12,16 +12,15 @@
 use crate::{config::Config, storage::Storage};
 use dashmap::DashMap;
 use log::{debug, error, warn};
-use std::fs::File;
-use std::io::{Error, ErrorKind, Read};
-use std::path::Path;
+use std::io::{Error, ErrorKind};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::vec;
 use std::{str, sync::Arc};
 use tokio::sync::Mutex;
 
+/// Auxiliary value type
 #[derive(Debug, Clone)]
-enum AuxValue {
+pub enum AuxValue {
   String(String),
   Integer(i64),
 }
@@ -37,40 +36,16 @@ pub async fn populate_hot_storage(storage: &Arc<Mutex<Storage>>, config: &Arc<Mu
   let dbfilename = config.get("dbfilename").unwrap();
   let rdb_file_path = format!("{}/{}", directory, dbfilename);
 
-  // Read the file and populate the storage
-  // let rdb_contents = std::fs::read_to_string(rdb_file_path).unwrap();
-  // let rdb_contents = read_file(rdb_file_path);
-  // let rdb_contents_string = String::from_utf8_lossy(&rdb_contents).to_uppercase();
-
-  // let buffer = match File::open(&rdb_file_path) {
-  //   Ok(f) => {
-  //     // let mut buffer: [u8; 1024] = [0; 1024];
-  //     let mut reader = std::io::BufReader::new(f);
-
-  //     let mut buffer = vec![];
-  //     reader.read_to_end(&mut buffer).expect("cannot read string");
-  //     let str = String::from_utf8_lossy(&buffer).to_string();
-  //     str
-  //   }
-  //   Err(e) => {
-  //     eprintln!("Failed to open RDB file: {}", e);
-  //     return;
-  //   }
-  // };
-
   println!("Reading RDB file: {}", rdb_file_path);
 
-  let file = File::open(&rdb_file_path).unwrap();
-  // let mut buffer: [u8; 1024] = [0; 1024];
-  let mut buffer = vec![];
-  let mut reader = std::io::BufReader::new(file);
-  reader.read_to_end(&mut buffer).unwrap();
+  let rdb_data = match std::fs::read(&rdb_file_path) {
+    Ok(data) => data,
+    Err(e) => {
+      error!("Failed to read RDB file: {}", e);
+      return;
+    }
+  };
 
-  // let rdb_data = hex::decode(buffer).unwrap();
-  println!("Contents: {:x?}", buffer);
-  let stringified_contents = String::from_utf8_lossy(&buffer).to_string();
-  println!("Contents as String: {:x?}", stringified_contents);
-  let rdb_data = hex::decode(stringified_contents.trim()).expect("Failed to decode RDB file");
   let mut parser = RDBParser::new(rdb_data);
 
   if let Err(e) = parser.parse() {
@@ -109,22 +84,6 @@ pub async fn populate_hot_storage(storage: &Arc<Mutex<Storage>>, config: &Arc<Mu
     });
 
   drop(parser)
-}
-
-/// Parse the RDB version from the RDB file
-pub fn parse_rdb_version(data: &[u8]) -> Result<u32, &'static str> {
-  if data.len() < 9 {
-    return Err("Input data too short to parse RDB version");
-  }
-
-  // The first 5 bytes are the magic string "REDIS"
-  let magic = str::from_utf8(&data[0..5]).map_err(|_| "Invalid magic string")?;
-  if magic != "REDIS" {
-    return Err("Invalid RDB file. Magic String is missing");
-  }
-
-  let version = str::from_utf8(&data[5..9]).map_err(|_| "Invalid RDB version")?;
-  version.parse::<u32>().map_err(|_| "Invalid RDB version")
 }
 
 /// Parser struct for the RDBParser
@@ -189,10 +148,7 @@ impl RDBParser {
   }
 
   pub fn stringify(value: &[u8]) -> String {
-    match std::str::from_utf8(value) {
-      Ok(s) => s.to_string(),
-      Err(e) => format!("Non-UTF8 data: {:?} (Error: {})", value, e),
-    }
+    String::from_utf8_lossy(value).into_owned()
   }
 
   /// Print the RDB file information
