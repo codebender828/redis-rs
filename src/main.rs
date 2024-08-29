@@ -157,7 +157,7 @@ fn handle_connection(
               }
             }
             Ok(Command::INFO(_section)) => {
-              let is_replica = config.lock().await.has("replica_of");
+              let is_replica = config.lock().await.has("replicaof");
               let info = if is_replica {
                 "role:slave"
               } else {
