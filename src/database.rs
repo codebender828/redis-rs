@@ -13,7 +13,7 @@ use crate::{config::Config, storage::Storage};
 use dashmap::DashMap;
 use log::{debug, error, info, warn};
 use std::io::{Error, ErrorKind};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 use std::vec;
 use std::{str, sync::Arc};
 use tokio::sync::Mutex;
@@ -100,7 +100,6 @@ pub async fn populate_hot_storage(storage: &Arc<Mutex<Storage>>, config: &Arc<Mu
 pub struct RDBParser {
   /// Raw file data for the RDB file
   data: Vec<u8>,
-  keys: Vec<Vec<u8>>,
   rdb_version: u32,
   aux_fields: DashMap<String, AuxValue>,
   entries: Vec<(Vec<u8>, Vec<u8>)>,
@@ -112,7 +111,6 @@ impl RDBParser {
   pub fn new(data: Vec<u8>) -> Self {
     RDBParser {
       data,
-      keys: Vec::new(),
       entries: Vec::new(),
       rdb_version: 0,
       aux_fields: DashMap::new(),

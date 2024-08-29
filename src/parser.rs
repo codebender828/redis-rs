@@ -1,5 +1,7 @@
 use std::str;
 
+use log::info;
+
 #[derive(Debug)]
 pub enum Command {
   PING(Option<String>),
@@ -9,6 +11,7 @@ pub enum Command {
   CONFIGGET(String),
   UNKNOWN(String),
   KEYS(String),
+  INFO(String),
 }
 
 pub enum RedisValue {
@@ -115,6 +118,19 @@ pub fn parse_command(command_input: &[u8]) -> Result<Command, String> {
         return Err("Invalid KEYS command format".to_string());
       } else {
         Ok(Command::KEYS(parts[4].to_string()))
+      }
+    }
+    "INFO" => {
+      let options = parts[4..]
+        .iter()
+        .filter(|o| !o.is_empty())
+        .collect::<Vec<&&str>>();
+      info!("Options: {:?}", options);
+
+      if parts.len() < 4 {
+        return Err("Invalid INFO command format".to_string());
+      } else {
+        Ok(Command::INFO(parts[4].to_string()))
       }
     }
     _ => Ok(Command::UNKNOWN(command)),
