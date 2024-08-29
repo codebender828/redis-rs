@@ -11,7 +11,7 @@
  */
 use crate::{config::Config, storage::Storage};
 use dashmap::DashMap;
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use std::io::{Error, ErrorKind};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::vec;
@@ -31,6 +31,14 @@ pub async fn populate_hot_storage(storage: &Arc<Mutex<Storage>>, config: &Arc<Mu
 
   let storage = storage.lock().await;
   let config = config.lock().await;
+
+  // Extract the directory and dbfilename from the configuration
+  // and populate the storage with the data
+  // If the dir or dbfilename is not present, return early
+  if !config.has("dir") || !config.has("dbfilename") {
+    info!("Configuration does not contain dir or dbfilename. Skipping read.");
+    return;
+  }
 
   let directory = config.get("dir").unwrap();
   let dbfilename = config.get("dbfilename").unwrap();

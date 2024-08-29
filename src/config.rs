@@ -26,4 +26,8 @@ impl Config {
       .map(|v| (v.key().clone(), v.value().clone()))
       .collect()
   }
+
+  pub fn has(&self, key: &str) -> bool {
+    self.config.contains_key(key)
+  }
 }
