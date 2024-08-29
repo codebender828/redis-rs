@@ -158,13 +158,21 @@ fn handle_connection(
             }
             Ok(Command::INFO(_section)) => {
               let is_replica = config.lock().await.has("replicaof");
-              let info = if is_replica {
-                "role:slave"
+              let mut replication_info: Vec<String> = Vec::new();
+              if is_replica {
+                replication_info.push("role:slave".to_string());
+                let replication_id = config.lock().await.get("replication_id").unwrap();
+                let replication_offset = config.lock().await.get("replication_offset").unwrap();
+
+                replication_info.push(format!("master_replid:{}", replication_id));
+                replication_info.push(format!("master_repl_offset:{}", replication_offset));
               } else {
-                "role:master"
+                replication_info.push("role:master".to_string())
               };
 
-              let response = serialize_response(RedisValue::BulkString(Some(info.to_string())));
+              let info = replication_info.join("\r\n");
+
+              let response = serialize_response(RedisValue::BulkString(Some(info)));
               if let Err(e) = stream.write_all(response.as_bytes()).await {
                 println!("Failed to write to stream; err = {:?}", e);
                 break;

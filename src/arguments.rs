@@ -1,10 +1,18 @@
 use crate::config::Config;
 use log::info;
+use nanoid::nanoid;
 use std::fs::create_dir_all;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
+
+const ALPHABET: [char; 62] = [
+  '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i',
+  'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B',
+  'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U',
+  'V', 'W', 'X', 'Y', 'Z',
+];
 
 pub type CLIArguments = Vec<(String, String)>;
 
@@ -66,7 +74,11 @@ pub async fn process_configuration_arguments(
         create_dir_all(directory.clone()).unwrap();
       }
       _ => {
-        eprintln!("Unknown option: {}", argument);
+        // If there is no replicaof argument, then this instance is a master.
+        // generate random id
+        let replication_id = nanoid!(40, &ALPHABET);
+        config.set("replication_id".to_string(), replication_id.to_string());
+        config.set("replication_offset".to_string(), "0".to_string());
       }
     }
   }
