@@ -1,4 +1,5 @@
 use crate::config::Config;
+use log::info;
 use std::fs::create_dir_all;
 use std::fs::File;
 use std::path::Path;
@@ -53,6 +54,16 @@ pub async fn process_configuration_arguments(
         if !file_path.exists() {
           File::create(file_path).unwrap();
         }
+      }
+      "--replica-of" => {
+        info!(
+          "Role: Slave. This redis instance is a replica of {}",
+          argument_value
+        );
+        let directory = argument_value.clone();
+        config.set("replica_of".to_string(), argument_value);
+        // Create the directory if it doesn't exist
+        create_dir_all(directory.clone()).unwrap();
       }
       _ => {
         eprintln!("Unknown option: {}", argument);

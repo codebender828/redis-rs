@@ -157,7 +157,13 @@ fn handle_connection(
               }
             }
             Ok(Command::INFO(_section)) => {
-              let info = "role:master";
+              let is_replica = config.lock().await.has("replica_of");
+              let info = if is_replica {
+                "role:slave"
+              } else {
+                "role:master"
+              };
+
               let response = serialize_response(RedisValue::BulkString(Some(info.to_string())));
               if let Err(e) = stream.write_all(response.as_bytes()).await {
                 println!("Failed to write to stream; err = {:?}", e);
