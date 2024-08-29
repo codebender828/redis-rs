@@ -22,7 +22,7 @@ use database::populate_hot_storage;
 
 #[tokio::main]
 async fn main() {
-  env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
+  env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
   println!("Starting Redis Server!");
 
   let mut args: Vec<String> = env::args().collect();

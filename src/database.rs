@@ -82,22 +82,13 @@ pub async fn populate_hot_storage(storage: &Arc<Mutex<Storage>>, config: &Arc<Mu
       let key = RDBParser::stringify(key);
       let value = RDBParser::stringify(value);
 
-      let time_to_expiry_in_seconds = expiry_time.duration_since(UNIX_EPOCH).unwrap_or_default();
-
-      println!(
-        "Key: {}, Value: {}, Expiry Time: {:?}",
-        key,
-        value,
-        time_to_expiry_in_seconds.as_secs().to_string()
-      );
+      let now = SystemTime::now();
+      let time_since_expiry = expiry_time.duration_since(now).unwrap_or_default();
 
       storage.set(
         key,
         value,
-        vec![(
-          "EX".to_string(),
-          time_to_expiry_in_seconds.as_secs().to_string(),
-        )],
+        vec![("EX".to_string(), time_since_expiry.as_secs().to_string())],
       );
     });
 
