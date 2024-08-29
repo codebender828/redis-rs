@@ -86,7 +86,9 @@ pub async fn populate_hot_storage(storage: &Arc<Mutex<Storage>>, config: &Arc<Mu
 
       println!(
         "Key: {}, Value: {}, Expiry Time: {:?}",
-        key, value, expiry_time
+        key,
+        value,
+        time_to_expiry_in_seconds.as_secs().to_string()
       );
 
       storage.set(
