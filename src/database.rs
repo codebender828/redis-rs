@@ -69,9 +69,17 @@ pub async fn populate_hot_storage(storage: &Arc<Mutex<Storage>>, config: &Arc<Mu
     }
   };
 
+  let file = File::open(&rdb_file_path).unwrap();
+  // let mut buffer: [u8; 1024] = [0; 1024];
+  let mut buffer = vec![];
+  let mut reader = std::io::BufReader::new(file);
+  reader.read_to_end(&mut buffer).unwrap();
+
   // let rdb_data = hex::decode(buffer).unwrap();
-  let rdb_data = hex::decode(buffer.trim()).expect("Failed to decode RDB file");
-  println!("Contents: {:x?}", rdb_data);
+  println!("Contents: {:x?}", buffer);
+  let stringified_contents = String::from_utf8_lossy(&buffer).to_string();
+  println!("Contents as String: {:x?}", stringified_contents);
+  let rdb_data = hex::decode(stringified_contents.trim()).expect("Failed to decode RDB file");
   let mut parser = RDBParser::new(rdb_data);
 
   if let Err(e) = parser.parse() {
