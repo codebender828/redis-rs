@@ -26,17 +26,6 @@ enum AuxValue {
   Integer(i64),
 }
 
-fn read_file(file_path: String) -> Vec<u8> {
-  let path = Path::new(&file_path);
-  if !path.exists() {
-    return String::from("Not Found!").into();
-  }
-  let mut file_content = Vec::new();
-  let mut file = File::open(&file_path).expect("Unable to open file");
-  file.read_to_end(&mut file_content).expect("Unable to read");
-  file_content
-}
-
 pub async fn populate_hot_storage(storage: &Arc<Mutex<Storage>>, config: &Arc<Mutex<Config>>) {
   // Extract the directory and dbfilename from the configuration
   // and populate the storage with the data
@@ -53,21 +42,23 @@ pub async fn populate_hot_storage(storage: &Arc<Mutex<Storage>>, config: &Arc<Mu
   // let rdb_contents = read_file(rdb_file_path);
   // let rdb_contents_string = String::from_utf8_lossy(&rdb_contents).to_uppercase();
 
-  let buffer = match File::open(&rdb_file_path) {
-    Ok(f) => {
-      // let mut buffer: [u8; 1024] = [0; 1024];
-      let mut reader = std::io::BufReader::new(f);
+  // let buffer = match File::open(&rdb_file_path) {
+  //   Ok(f) => {
+  //     // let mut buffer: [u8; 1024] = [0; 1024];
+  //     let mut reader = std::io::BufReader::new(f);
 
-      let mut buffer = vec![];
-      reader.read_to_end(&mut buffer).expect("cannot read string");
-      let str = String::from_utf8_lossy(&buffer).to_string();
-      str
-    }
-    Err(e) => {
-      eprintln!("Failed to open RDB file: {}", e);
-      return;
-    }
-  };
+  //     let mut buffer = vec![];
+  //     reader.read_to_end(&mut buffer).expect("cannot read string");
+  //     let str = String::from_utf8_lossy(&buffer).to_string();
+  //     str
+  //   }
+  //   Err(e) => {
+  //     eprintln!("Failed to open RDB file: {}", e);
+  //     return;
+  //   }
+  // };
+
+  println!("Reading RDB file: {}", rdb_file_path);
 
   let file = File::open(&rdb_file_path).unwrap();
   // let mut buffer: [u8; 1024] = [0; 1024];
